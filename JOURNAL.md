@@ -151,4 +151,42 @@ All 16 conditional blocks reviewed. Key checks:
 - ZP,X wrapping for tape save: `LO(&B4 - &FD)` = &B7, and &B7 + &FD wraps to &B4 in zero page
 
 ### Result
-`original.6502` produces byte-identical ROM (MD5 verified). `new.6502` reports **271 free bytes** before the MMIO region at &FC00.
+`original.6502` produces byte-identical ROM (MD5 verified). `new.6502` reports **270 free bytes** before the MMIO region at &FC00.
+
+### Bug fix: key table padding byte
+The `EQUB 0` between `osbyte120EntryPoint` and `keyDataTable2` was initially removed as "unused". This broke keyboard handling — the QWERTYUIOP row was shifted by one key. The byte is padding that keeps the 7 key data tables spaced exactly 16 bytes apart (as required by the key lookup code). Restored unconditionally with corrected comment.
+
+---
+
+## 2026-03-27: Version String and Regression Test
+
+### OS 1.2B version string
+The new version now reports "OS 1.2B" (instead of "OS 1.20") in two places:
+- The `*FX 0` error message (OSBYTE 0)
+- The startup banner printed during boot
+
+Both are conditional on `NEW_VERSION`.
+
+### Automated regression test (test.sh)
+Created `test.sh` using beebjit's `-os` flag (to specify the ROM without replacing files) and `-commands` interface to script a full test session:
+
+**Test sequence:** boot → `*FX 0` → `MODE 0` → `COLOUR129:CLS` → `MODE 7` → `MODE 2` → `COLOUR129:CLS` → `MODE 7` → keyboard rows → `PRINT 2+2` → `VDU 65,66,67,68,69`
+
+**Frame capture:** beebjit captures raw BGRA frames every 10K cycles (~200 per second). Both ROMs are run through the same sequence and all frames are compared.
+
+**Results:** ~1100 frames captured per ROM. ~88 frames differ (version string + transient screen clear pattern), the rest are identical.
+
+### Hurdles
+
+#### beebjit keyboard mapping
+beebjit's `keydown` command uses PC physical key codes, not BBC key codes. Most ASCII characters work directly, but symbols that are on different physical keys need translation:
+- `*` = Shift (133) + PC apostrophe (39), which maps to BBC Shift+colon
+- `:` = PC apostrophe (39) unshifted, which maps to BBC colon
+- `+` = Shift (133) + PC semicolon (59), which maps to BBC Shift+semicolon
+- `keydown 42` (ASCII `*`) is silently ignored — there's no BBC key at that position
+
+#### beebjit frame capture requires non-fast mode
+Frame capture (`-frame-cycles`) only works without the `-fast` flag. With `-fast`, no frames are written. The test runs at real-time 2MHz speed.
+
+#### breakat uses absolute cycle counts
+The `-commands` interface's `breakat` sets an absolute cycle count breakpoint, not a relative delay. The test uses a Python helper to track cumulative cycle counts and emit monotonically increasing breakpoints.
