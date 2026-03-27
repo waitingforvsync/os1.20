@@ -16864,9 +16864,7 @@ ENDIF
     STX firstKeyPressedInternal                             ; store X as previous key pressed
     RTS                                                     ;
 
-IF NOT(NEW_VERSION)
-    EQUB 0                                                  ; [unused]
-ENDIF
+    EQUB 0                                                  ; padding to keep key data tables 16 bytes apart
 
 ; ***************************************************************************************
 .keyDataTable2
