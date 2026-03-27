@@ -14290,7 +14290,11 @@ ENDIF
     BNE exitWithX1                                          ; if (X is not zero) then branch (exit with X = 1 meaning OS 1.20)
     BRK                                                     ; generate error message
     EQUB &F7                                                ; error number
+IF NEW_VERSION
+    EQUS "OS 1.2B",0                                        ; error string with zero terminator
+ELSE
     EQUS "OS 1.20",0                                        ; error string with zero terminator
+ENDIF
 
 ; ***************************************************************************************
 ;
@@ -16989,7 +16993,11 @@ ENDIF
                                                             ; } suppressed
     JSR printFollowingMessage                               ; print following message routine
     EQUS charRETURN                                         ; Carriage return
+IF NEW_VERSION
+    EQUS "OS 1.2B"                                          ;
+ELSE
     EQUS "OS 1.20"                                          ;
+ENDIF
     EQUS charRETURN                                         ; Carriage return
     EQUB &00                                                ; terminator
     RTS                                                     ;
