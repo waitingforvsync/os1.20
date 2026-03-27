@@ -2749,6 +2749,7 @@
 ; These are well-known addresses that must not move, even if the code is modified.
 ;
 ; ***************************************************************************************
+    MUL640  = &C375                                         ; multiply by 640 lookup table
     MMIO    = &FC00                                         ; credits string in MMIO space
     EXTVEC  = &FF00                                         ; extended vector jump table
     DEFVTL  = &FFB6                                         ; default vector table length
@@ -3684,8 +3685,10 @@
 ;
 ; ***************************************************************************************
 .vduBaseAddress
+IF NOT(NEW_VERSION)
 .initialiseScreenOnReset
     JMP initialiseVDUVariablesAndSetMODE                    ;
+ENDIF
 
 ; ***************************************************************************************
 ;
@@ -3877,6 +3880,7 @@
 ; Used for calculating screen addresses
 ;
 ; ***************************************************************************************
+    SKIPTO MUL640
 .multiplyBy640Table
     EQUB HI(0 * 640), LO(0 * 640)
     EQUB HI(1 * 640), LO(1 * 640)
@@ -4166,6 +4170,7 @@
     EQUB 12                                                 ; 8k  (MODE 6)
     EQUB 4                                                  ; 1k  (MODE 7)
 
+IF NOT(NEW_VERSION)
 ; Low byte of the address to clear the screen in each MODE group
 .clearScreenRoutineEntryPointLow
     EQUB LO(clearScreenRoutineEntryPointMODE012)            ; MODE 0,1,2
@@ -4173,6 +4178,7 @@
     EQUB LO(clearScreenRoutineEntryPointMODE45)             ; MODE 4,5
     EQUB LO(clearScreenRoutineEntryPointMODE6)              ; MODE 6
     EQUB LO(clearScreenRoutineEntryPointMODE7)              ; MODE 7
+ENDIF
 
 ; screen size (high byte) for each MODE group
 .screenMemorySizeInBytesHigh
@@ -5545,7 +5551,9 @@
     BPL _anon036                                            ;
     RTS                                                     ;
 
+IF NOT(NEW_VERSION)
     PLA                                                     ; [unused. Was used in MOS 0.92]
+ENDIF
 
 .exit4
     RTS                                                     ;
@@ -6141,6 +6149,28 @@
     JSR vdu26EntryPoint                                     ; set default windows
 
 .initializeDisplayAndHomeCursor
+IF NEW_VERSION
+    LDX #0                                                  ; X = 0
+    STX vduScreenTopLeftAddressLow                          ; screen start address low = 0
+    STX vduTempStoreDE                                      ; pointer low byte = 0
+    STX pagedModeCounter                                    ; paged mode counter
+    STX vduTextCursorXPosition                              ; text column
+    STX vduTextCursorYPosition                              ; current text line
+    LDA vduStartScreenAddressHighByte                       ; high byte of screen RAM address
+    STA vduScreenTopLeftAddressHigh                         ; screen start address high
+    STA vduTempStoreDF                                      ; pointer high byte (same value)
+    JSR setTextCursorCRTCAddress                            ; set cursor CRTC address from A,X
+    LDY #crtcStartScreenAddressHighRegister                 ;
+    JSR setTwoCRTCRegisters                                 ; set screen start address in CRTC
+    LDY #0                                                  ; Y = byte offset within page
+    LDA vduBackgroundTextColour                             ; background text colour
+.clearScreenLoop
+    STA (vduTempStoreDE),Y                                  ; store to screen via ZP pointer
+    INY                                                     ;
+    BNE clearScreenLoop                                     ; loop for all 256 bytes in page
+    INC vduTempStoreDF                                      ; next page
+    BPL clearScreenLoop                                     ; loop until high byte reaches &80
+ELSE
     LDX #0                                                  ; X = 0
     LDA vduStartScreenAddressHighByte                       ; high byte of screen RAM address
     STX vduScreenTopLeftAddressLow                          ; screen start address low
@@ -6164,6 +6194,7 @@
     STX vduTextCursorXPosition                              ; text column
     STX vduTextCursorYPosition                              ; current text line
     JMP (vduJumpVectorLow)                                  ; jump indirect - this calls the screen clearing routine
+ENDIF
 
 ; ***************************************************************************************
 ;
@@ -6194,6 +6225,7 @@
 ; To visualise the pattern of bytes that are cleared see cls.ssd
 ;
 ; ***************************************************************************************
+IF NOT(NEW_VERSION)
 .clearScreenRoutineEntryPointMODE012
     STA &3000,X                                             ;
     STA &3100,X                                             ;
@@ -6286,6 +6318,7 @@
     INX                                                     ;
     BEQ exit7                                               ; if (all done) then branch (exit)
                                                             ; fall through...
+ENDIF
 
 ; ***************************************************************************************
 .executeRequiredVDUFunction
@@ -10279,7 +10312,11 @@
 ; ***************************************************************************************
 .skipSpeech
     LDA startUpOptions                                      ; get back start up options (bits 0-2 are MODE)
+IF NEW_VERSION
+    JSR initialiseVDUVariablesAndSetMODE                    ; initialise screen
+ELSE
     JSR initialiseScreenOnReset                             ; then jump to screen initialisation
+ENDIF
 
                                                             ; *KEY 10 facility (insert the *KEY 10 character code into the keyboard buffer)
     LDY #charKEY10                                          ; }
@@ -10347,7 +10384,11 @@
                                                             ; of .startupMessageSuppressionAndBootOptions)
     BPL skipStartupMessage                                  ; if (result clear) then branch (skip
                                                             ; startup message)
+IF NEW_VERSION
+    LDY #LO(bootMessage - vduBaseAddress - 1)               ; offset within page
+ELSE
     LDY #bootMessage - vduBaseAddress - 1                   ;
+ENDIF
     JSR displayString                                       ; output 'BBC Computer ' message
     LDA lastResetType                                       ; 0=soft reset, anything else continue
     BEQ outputTwoNewlines                                   ; if (soft reset) then branch (skip
@@ -12081,8 +12122,11 @@
     STA userVIAPeripheralControlRegister                    ; } STROBE signal to advise printer
     ORA #%00001110                                          ; } that valid data is waiting
     STA userVIAPeripheralControlRegister                    ; }
+IF NEW_VERSION
+    RTS                                                     ;
+ELSE
     BNE exit17                                              ; ALWAYS branch (return)
-                                                            ; [this could just be an RTS, saving one byte]
+ENDIF
 
 ; ***************************************************************************************
 .checkForSerialPrinter
@@ -13165,6 +13209,16 @@
 ;       otherwise carry set
 ;
 ; ***************************************************************************************
+IF NEW_VERSION
+.isLetter
+    PHA                                                     ; save A
+    AND #&DF                                                ; convert lower to upper case
+    SEC                                                     ;
+    SBC #charA                                              ; 'A'-'Z' maps to 0-25
+    CMP #26                                                 ; carry clear if letter, set otherwise
+    PLA                                                     ; restore original value of A
+    RTS                                                     ;
+ELSE
 .isLetter
     PHA                                                     ; save A
     AND #&DF                                                ; convert lower to upper case
@@ -13177,6 +13231,7 @@
 .yesLetter
     PLA                                                     ; restore original value of A
     RTS                                                     ;
+ENDIF
 
 ; [ Alternatively this would use four fewer bytes...
 ; .isLetter
@@ -15553,10 +15608,14 @@
     STY systemVIARegisterB                                  ; set the write enable line low (active)
                                                             ; to let the sound chip know there
                                                             ; is data
+IF NEW_VERSION
+    JSR exit24                                              ; delay ~12 cycles (JSR + RTS)
+ELSE
     LDY #2                                                  ; Y = loop counter
 ._anon264
     DEY                                                     ; execute a short delay (this is to
     BNE _anon264                                            ; keep the write enable line low for
+ENDIF
                                                             ; at least 8 us, 16 cycles. This is
                                                             ; required by the sound chip hardware)
                                                             ;
@@ -16805,7 +16864,9 @@
     STX firstKeyPressedInternal                             ; store X as previous key pressed
     RTS                                                     ;
 
+IF NOT(NEW_VERSION)
     EQUB 0                                                  ; [unused]
+ENDIF
 
 ; ***************************************************************************************
 .keyDataTable2
@@ -17699,8 +17760,13 @@
                                                             ; loop to work out the amount of file remaining to save, to calculate block length
                                                             ; length = end address - current address
 ._anon311
+IF NEW_VERSION
+    LDA LO(tapeSaveEndAddressLow - &FD),X                   ; read end address (ZP,X)
+    SBC LO(tapeSaveStartAddressLow - &FD),X                 ; subtract current start address (ZP,X)
+ELSE
     LDA 0 + (tapeSaveEndAddressLow - &FD) AND &FFFF,X       ; read end address
     SBC 0 + (tapeSaveStartAddressLow - &FD) AND &FFFF,X     ; subtract current start address
+ENDIF
     STA 0 + (fsBlockLengthLow - &FD) AND &FFFF,X            ; store at .fsBlockLengthLow/High and
                                                             ; .fsBlockFlagByte.
                                                             ; we don't care about overwriting
@@ -18753,12 +18819,12 @@
 
 ; ***************************************************************************************
 .clearCatalogueStatusBadROM
+IF NEW_VERSION
+    JSR clearCatalogueStatus                                ; clear current catalogue status
+ELSE
     LDA #%11110111                                          ; }
     JSR clearTapeStatusBits                                 ; } clear current catalogue status
-                                                            ; [this could just call
-                                                            ;  JSR .clearCatalogueStatus
-                                                            ;  instead of the LDA/JSR instructions
-                                                            ;  above, for a 2 byte saving]
+ENDIF
 
 .badROMError
     BRK                                                     ; cause error
@@ -18818,11 +18884,12 @@
 .clearChecksumTapeProgress
     JSR zeroChecksumAndFSFlag                               ; reset checksum etc
     STY fsReadProgressState                                 ; reset progress (Y=0)
+IF NEW_VERSION
+    RTS                                                     ;
+ELSE
     TXA                                                     ; A=X=length of filename
-    BNE exit32                                              ; The tape filename is always non-zero
-                                                            ; in length so:
-                                                            ; ALWAYS branch (exit)
-                                                            ; [In which case, RTS would be shorter]
+    BNE exit32                                              ; ALWAYS branch (exit)
+ENDIF
 
 ; ***************************************************************************************
 ;
@@ -19347,6 +19414,16 @@
     LSR A                                                   ; }
     JSR printHexDigit                                       ; print its ASCII equivalent
     PLA                                                     ; get back A
+IF NEW_VERSION
+.printHexDigit
+    AND #%00001111                                          ; clear high nybble. A=0-15
+    SED                                                     ; set decimal mode
+    CMP #10                                                 ; }
+    ADC #charZERO                                           ; } decimal mode arithmetic trick
+    CLD                                                     ; clear decimal mode
+.writeCharJumper
+    JMP OSWRCH                                              ; print character and return
+ELSE
 .printHexDigit
     CLC                                                     ; clear carry flag
     AND #%00001111                                          ; clear high nybble. A=0-15
@@ -19357,6 +19434,7 @@
 
 .writeCharJumper
     JMP OSWRCH                                              ; print character and return
+ENDIF
 
 ;[ This routine could be three bytes smaller...
 ;.printHexByte
@@ -20021,7 +20099,9 @@
 .exit36
     RTS                                                     ;
 
+IF NOT(NEW_VERSION)
     EQUB 0                                                  ; [unused]
+ENDIF
 
 ; ***************************************************************************************
 ; ***************************************************************************************
@@ -20318,6 +20398,7 @@
 ;   Adrian Warner
 ;   Alan Wright
 
+    endofcode = P%
     SKIPTO MMIO
     EQUS "(C) 1981 Acorn Computers Ltd.Thanks are due to the following contributors to "
     EQUS "the development of the BBC Computer (among others too numerous to mention):- "
@@ -20954,4 +21035,3 @@
 ;
 ; ***************************************************************************************
 
-    SAVE "OS120.rom", &C000, &10000

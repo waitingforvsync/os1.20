@@ -1,0 +1,4 @@
+    NEW_VERSION = TRUE
+    INCLUDE "os120.6502"
+    SAVE "OS120new.rom", &C000, &10000
+    PRINT "Free bytes before MMIO:", MMIO - endofcode

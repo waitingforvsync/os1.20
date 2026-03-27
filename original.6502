@@ -1,0 +1,3 @@
+    NEW_VERSION = FALSE
+    INCLUDE "os120.6502"
+    SAVE "OS120.rom", &C000, &10000

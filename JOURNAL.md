@@ -97,3 +97,58 @@ In the code body, replaced `.LABEL` definitions with `SKIPTO LABEL` directives. 
 
 ### Result
 Still assembles byte-identically. Any future code changes that would push past a fixed boundary will now produce a clear assembler error.
+
+---
+
+## 2026-03-27: Conditional Assembly and Size Optimizations
+
+### Build restructure
+Renamed `os120.asm` → `os120.6502`. Created two wrapper files:
+- `original.6502` — sets `NEW_VERSION = FALSE`, produces byte-identical ROM
+- `new.6502` — sets `NEW_VERSION = TRUE`, applies optimizations, reports free bytes
+
+All optimizations are wrapped in `IF NEW_VERSION ... ELSE ... ENDIF` blocks.
+
+### Fixed address: MUL640 = &C375
+Added the multiply-by-640 table as a fixed address with `SKIPTO MUL640`, since some software relies on this table being at &C375.
+
+### Optimizations applied
+
+| Change | Bytes | Details |
+|--------|-------|---------|
+| Screen clear rewrite | ~252 | Replaced 80 unrolled `STA &xxxx,X` instructions, 5 entry points, lookup table, and indirect jump mechanism with a single inlined loop using `STA (zp),Y` indirect addressing. Loop starts from `vduStartScreenAddressHighByte` and increments page until high byte reaches &80 (BPL). Also merged duplicate `LDX #0` and `LDA vduStartScreenAddressHighByte` from the calling code. |
+| isLetter alternative | 4 | Author-suggested `SEC/SBC #charA/CMP #26` trick instead of two CMP/BCC branches |
+| Hex print decimal trick | 3 | Author-suggested `SED/CMP #10/ADC #'0'/CLD` instead of CMP/BCC/ADC chain |
+| Remove initialiseScreenOnReset JMP | 3 | Sole caller now calls `initialiseVDUVariablesAndSetMODE` directly. Boot message offset uses `LO()` to handle page wrapping. |
+| Sound delay → JSR RTS | 2 | `LDY #2/DEY/BNE` delay loop → `JSR exit24` (same ~12 cycle delay) |
+| clearCatalogueStatusBadROM | 2 | `LDA/JSR clearTapeStatusBits` → `JSR clearCatalogueStatus` |
+| Tape filename branch → RTS | 2 | `TXA/BNE exit32` (always branches) → `RTS` |
+| Tape save ZP addressing | 2 | Two instructions changed from absolute,X to ZP,X using `LO()` |
+| Unused PLA (MOS 0.92) | 1 | Dead code from earlier OS version |
+| Unused EQUB (osbyte120) | 1 | Padding byte after routine |
+| Unused EQUB (before MMIO) | 1 | Padding byte at &FBFF |
+| Printer strobe BNE → RTS | 1 | `BNE exit17` (always branches to RTS) → `RTS` |
+| **Total** | **271** | |
+
+### Hurdles
+
+#### Self-modifying code in ROM
+First attempt at the screen clear loop used self-modifying code (`INC clearScreenSTA + 2` to change the STA high byte). This can't work in ROM. Replaced with `STA (vduTempStoreDE),Y` indirect addressing through a zero-page pointer — the pointer high byte is incremented instead.
+
+#### Screen clear: eliminating the indirect jump mechanism
+The original design used a table of entry point addresses, an indirect `JMP (vduJumpVectorLow)` to reach the mode-specific routine, and a second indirect JMP to loop back. First replacement kept this mechanism with 5 smaller entry points. Final version inlines the entire clear loop inside `initializeDisplayAndHomeCursor`, using `vduStartScreenAddressHighByte` (already loaded for the CRTC setup) as the loop start, and `BPL` to terminate at &80. This eliminated the entry point table, all 5 mode entry point labels, and the jump vector setup code.
+
+#### Boot message offset after removing initialiseScreenOnReset
+Removing the 3-byte JMP at `.vduBaseAddress` shifted `.bootMessage` 3 bytes earlier. The expression `bootMessage - vduBaseAddress - 1` became negative. Fixed by using `LO(bootMessage - vduBaseAddress - 1)` in the new version to wrap correctly.
+
+### Correctness verification
+All 16 conditional blocks reviewed. Key checks:
+- `vduTempStoreDE`/`DF` are temporary stores — no caller depends on their values after `initializeDisplayAndHomeCursor` returns
+- Screen memory always ends at &8000 for all modes, so `BPL` terminates correctly
+- The hex print decimal mode trick produces correct results for 0-9 (carry clear → '0'-'9') and 10-15 (carry set → BCD fixup → 'A'-'F')
+- The `isLetter` alternative preserves the same carry flag convention (clear = letter)
+- The sound delay `JSR exit24` takes 12 cycles (6 JSR + 6 RTS), meeting the 8µs / 16 cycle minimum
+- ZP,X wrapping for tape save: `LO(&B4 - &FD)` = &B7, and &B7 + &FD wraps to &B4 in zero page
+
+### Result
+`original.6502` produces byte-identical ROM (MD5 verified). `new.6502` reports **271 free bytes** before the MMIO region at &FC00.
