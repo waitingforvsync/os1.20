@@ -9793,7 +9793,11 @@ ENDIF
     EQUB &00                                                ; Tube presence flag                            $027A     *FX 234
     EQUB &00                                                ; speech processor presence flag                $027B     *FX 235
     EQUB &00                                                ; character destination status                  $027C     *FX 236
+IF NEW_VERSION
+    EQUB &01                                                ; cursor editing state (1=line editing)         $027D     *FX 237
+ELSE
     EQUB &00                                                ; cursor editing state                          $027D     *FX 237
+ENDIF
 
 .softResetHWM
 ; ************************* SOFT reset high water mark **********************************
@@ -13303,8 +13307,21 @@ ENDIF
                                                             ; carry  clear means cursor keys and COPY key are soft keys 11=COPY,12=LEFT,13=RIGHT,
                                                             ;                                                           14=DOWN,15=UP
 
-    PLA                                                     ; get back character A
+    PLA                                                     ; get back character A (cursor code &87-&8B)
+IF NEW_VERSION
+    BCC handleFunctionKeyPress                              ; if (carry clear) cursor keys are soft
+    PHA                                                     ; save cursor code
+    LDA keyboardStatusFlags                                 ; check keyboard status flags
+    AND #%00001000                                          ; bit 3 = SHIFT pressed?
+    BNE shiftCursorSplitMode                                ; if (SHIFT held) enter split cursor mode
+    PLA                                                     ; restore cursor code
+    BCS exitWithCarryClear2                                 ; return cursor code to caller (carry still set)
+.shiftCursorSplitMode
+    LDA characterDestinationsAvailableFlags                 ; enter split cursor path (code is on stack)
+    JMP checkVDUAndSplitCursor                              ; join the cursorEditingType=0 path
+ELSE
     BCS exitWithCarryClear2                                 ; if (carry set) then branch (exit)
+ENDIF
 
                                                             ; cursor keys are 'soft'
 .handleFunctionKeyPress
@@ -13401,6 +13418,7 @@ ENDIF
                                                             ; bit 6 - disable printer driver (unless preceded by VDU 1)
                                                             ; bit 7 - not used
 
+.checkVDUAndSplitCursor
     ROR A                                                   ; get bit 1 into carry
     ROR A                                                   ;
     PLA                                                     ;
