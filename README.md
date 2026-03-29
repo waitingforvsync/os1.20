@@ -32,7 +32,7 @@ OSWORD 0 (read line) is reimplemented with proper line editing:
 - **Insert and delete** — characters are inserted at the cursor position, shifting the rest of the line right. Delete removes the character before the cursor, shifting the rest left.
 - **Cursor left/right** — move the cursor within the entered line without changing it.
 - **Cursor up/down** — move the cursor by one screen row (text window width) at a time, clamped to the start and end of the line.
-- **History recall** — pressing cursor up on an empty line recalls the previously entered line, if the buffer contents are still intact. This is detected by comparing a CRC16 checksum of the buffer against a stored value from the last RETURN.
+- **History recall** — pressing cursor up on an empty line recalls the previously entered line, if the buffer contents are still intact. This is detected by comparing a CRC16 checksum of the buffer against a stored value from the last RETURN. Note: this does not work well with BASIC, which tokenises the input buffer in place after RETURN, overwriting the original text with keyword tokens.
 - **RETURN, ESCAPE, CTRL+U** — these move the cursor to the end of the line before acting, so the display is left in a clean state.
 
 All existing OSWORD 0 parameter block features are preserved: maximum line length, minimum and maximum acceptable character codes, and VDU queue handling.
