@@ -23,7 +23,24 @@ The test script runs both ROMs through beebjit with scripted input (MODE changes
 
 OS 1.20 is the final version of the BBC Micro's Machine Operating System (MOS), providing the core firmware for the BBC Model B and B+ microcomputers. This project aims to produce a fully documented, annotated source file that assembles to a byte-identical copy of the original ROM, with conditional assembly support for size optimizations that free up space for new functionality.
 
-The new version (OS 1.2B) adds:
-- **Line editor** — OSWORD 0 reimplemented with insert/delete, cursor movement within the line, cursor up/down by screen width, and single-line history recall via CRC16 matching
-- **Shift+cursor** — in the default `*FX 4,1` mode, Shift+cursor keys enter split cursor editing mode
-- **Size optimizations** — compact screen clear loop, dead code removal, and micro-optimizations from the original disassembly annotations
+The new version (OS 1.2B) adds the following features:
+
+### Line editor
+
+OSWORD 0 (read line) is reimplemented with proper line editing:
+
+- **Insert and delete** — characters are inserted at the cursor position, shifting the rest of the line right. Delete removes the character before the cursor, shifting the rest left.
+- **Cursor left/right** — move the cursor within the entered line without changing it.
+- **Cursor up/down** — move the cursor by one screen row (text window width) at a time, clamped to the start and end of the line.
+- **History recall** — pressing cursor up on an empty line recalls the previously entered line, if the buffer contents are still intact. This is detected by comparing a CRC16 checksum of the buffer against a stored value from the last RETURN.
+- **RETURN, ESCAPE, CTRL+U** — these move the cursor to the end of the line before acting, so the display is left in a clean state.
+
+All existing OSWORD 0 parameter block features are preserved: maximum line length, minimum and maximum acceptable character codes, and VDU queue handling.
+
+### Shift+cursor split cursor mode
+
+The OS defaults to `*FX 4,1`, which returns cursor key codes to the application for line editing. Holding Shift while pressing a cursor key enters the traditional BBC split cursor editing mode (read from screen with COPY key), allowing both features to coexist. `*FX 4,0` restores the original OS 1.20 cursor editing behaviour.
+
+### Size optimizations
+
+Space for the new features was created by replacing the unrolled screen clear with a compact loop, removing dead code, and applying micro-optimizations identified in the original disassembly annotations.

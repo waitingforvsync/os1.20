@@ -14890,11 +14890,13 @@ IF NEW_VERSION
 
 ; ---- Normal character ----
     LDX editBufLen                                          ;
-    CPX osword0MaxLineLength : BCS editBell                 ; full?
-    CMP osword0MinASCIICharacter : BCC readInputCharacter   ; < min
+    CPX osword0MaxLineLength                                ; full?
+    BCS editBell                                            ; yes - warning beep
+    CMP osword0MinASCIICharacter                            ; < min?
+    BCC outputCharacterAndReadAgain                         ; yes, echo and reloop (as per original behaviour, so control codes can be echoed)
     CMP osword0MaxASCIICharacter                            ;
     BEQ editInsert                                          ; == max: accept
-    BCS readInputCharacter                                  ; > max: reject
+    BCS outputCharacterAndReadAgain                         ; > max: reject
 
 ; ---- Insert char A at cursor Y ----
 .editInsert
