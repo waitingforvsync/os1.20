@@ -21,7 +21,7 @@ The test script runs both ROMs through beebjit with scripted input (MODE changes
 
 ## About
 
-OS 1.20 is the final version of the BBC Micro's Machine Operating System (MOS), providing the core firmware for the BBC Model B and B+ microcomputers. This project aims to produce a fully documented, annotated source file that assembles to a byte-identical copy of the original ROM, with conditional assembly support for size optimizations that free up space for new functionality.
+OS 1.20 is the final version of the BBC Micro's Machine Operating System (MOS) shipped for the BBC Model B. This project aims to produce a fully documented, annotated source file that assembles to a byte-identical copy of the original ROM, with conditional assembly support for size optimizations that free up space for new functionality.
 
 The new version (OS 1.2B) adds the following features:
 
@@ -32,7 +32,7 @@ OSWORD 0 (read line) is reimplemented with proper line editing:
 - **Insert and delete** — characters are inserted at the cursor position, shifting the rest of the line right. Delete removes the character before the cursor, shifting the rest left.
 - **Cursor left/right** — move the cursor within the entered line without changing it.
 - **Cursor up/down** — move the cursor by one screen row (text window width) at a time, clamped to the start and end of the line.
-- **History recall** — pressing cursor up on an empty line recalls the previously entered line, if the buffer contents are still intact. This is detected by comparing a CRC16 checksum of the buffer against a stored value from the last RETURN. Note: this does not work well with BASIC, which tokenises the input buffer in place after RETURN, overwriting the original text with keyword tokens.
+- **History recall** — pressing cursor up on an empty line recalls the previously entered line, if the buffer contents are still intact. This is detected by comparing a CRC16 checksum of the buffer against a stored value from the last RETURN. Note: this does not work well with BASIC, which tokenises the input buffer in place after RETURN, overwriting the original text with keyword tokens. This feature will likely be removed in future to reclaim space for other functionality.
 - **RETURN, ESCAPE, CTRL+U** — these move the cursor to the end of the line before acting, so the display is left in a clean state.
 
 All existing OSWORD 0 parameter block features are preserved: maximum line length, minimum and maximum acceptable character codes, and VDU queue handling.
