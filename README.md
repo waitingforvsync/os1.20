@@ -23,4 +23,7 @@ The test script runs both ROMs through beebjit with scripted input (MODE changes
 
 OS 1.20 is the final version of the BBC Micro's Machine Operating System (MOS), providing the core firmware for the BBC Model B and B+ microcomputers. This project aims to produce a fully documented, annotated source file that assembles to a byte-identical copy of the original ROM, with conditional assembly support for size optimizations that free up space for new functionality.
 
-The new version (OS 1.2B) currently frees 270 bytes by replacing the unrolled screen clear with a compact loop, removing dead code, and applying various micro-optimizations identified in the original disassembly annotations.
+The new version (OS 1.2B) adds:
+- **Line editor** — OSWORD 0 reimplemented with insert/delete, cursor movement within the line, cursor up/down by screen width, and single-line history recall via CRC16 matching
+- **Shift+cursor** — in the default `*FX 4,1` mode, Shift+cursor keys enter split cursor editing mode
+- **Size optimizations** — compact screen clear loop, dead code removal, and micro-optimizations from the original disassembly annotations

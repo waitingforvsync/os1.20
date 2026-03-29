@@ -41,6 +41,8 @@ Well-known addresses (OS entry points, extended vectors, MMIO credits, 6502 CPU 
 - This is ROM code — no self-modifying code. Use indirect addressing instead.
 - Key data tables are spaced 16 bytes apart with padding bytes between them — do not remove padding.
 - The `SAVE` directive is in the wrapper files, not in os120.6502.
+- ZP &F8/&F9 are used by the new OSWORD 0 line editor (`editBufLen`/`editTemp`). They were previously unused and are safe from VDU driver clobbering (unlike &DA/&DB).
+- The new OSWORD 0 reuses the tape CRC routine (`updateCRC` at &F7B0) for history recall. This is safe since tape cannot be active during line input.
 
 ## BeebAsm Syntax Notes
 

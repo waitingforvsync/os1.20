@@ -14855,10 +14855,10 @@ IF NEW_VERSION
 
 ; ---- Cursor left ----
 .editLeft
-    TYA : BEQ readInputCharacter
-    DEY
-    LDA #charBACKSPACE
-    EQUB &2C	                                                ; skip two bytes
+    TYA : BEQ readInputCharacter                            ; do nothing if we're at the start of the line
+    DEY                                                     ; move cursor position left
+    LDA #charBACKSPACE                                      ; print backspace
+    EQUB &2C	                                                ; skip two bytes (BIT abs)
 
 ; ---- Bell ----
 .editBell
@@ -14914,104 +14914,99 @@ IF NEW_VERSION
 
 ; ---- CTRL+U ----
 .editCtrlU
-    JSR editToEnd                                           ;
-    LDA #0 : STA editBufLen : STA editTemp
-    LDA #charDELETE : BNE moveCursorBackLoop
+    JSR editToEnd                                           ; move cursor to the end of the line
+    LDA #0 : STA editBufLen : STA editTemp                  ; line length zero
+    LDA #charDELETE : BNE moveCursorBackLoop                ; bring backspaces till the start of the line
 
 ; ---- Cursor right ----
 .editRight
-    CPY editBufLen : BEQ readInputCharacter
-    INY
-    LDA #charTAB: BNE outputCharacterAndReadAgain
+    CPY editBufLen : BEQ readInputCharacter                 ; if at the end of the line, do nothing
+    INY                                                     ; move cursor position to the right
+    LDA #charTAB: BNE outputCharacterAndReadAgain           ; print a tab character
 
 ; ---- Cursor down ----
 .editDown
-    JSR editGetWidth
+    JSR editGetWidth                                        ; number of TABs we have to print to get to the line below
 .editDownLoop
-    CPY editBufLen : BEQ readInputCharacter
-    INY
-    LDA #charTAB : JSR OSWRCH
+    CPY editBufLen : BEQ readInputCharacter                 ; if we hit the end of the line, stop here
+    INY                                                     ; increment position
+    LDA #charTAB : JSR OSWRCH                               ; print a tab
     DEX
-    BPL editDownLoop
-    JMP readInputCharacter
+    BPL editDownLoop                                        ; reloop X+1 times
+    JMP readInputCharacter                                  ; return to the input loop
 	
 ; ---- ESCAPE ----
 .editExit
-    JSR editToEnd                                           ;
+    JSR editToEnd                                           ; move cursor to the end of the line
 .exitWithNegativeAndCarryFlagsSet
-    LDA escapeFlag : ROL A
-    RTS                                                     ;
+    SEC
+    RTS                                                     ; return with C set and Y = line length (set by editToEnd)
 
 ; ---- RETURN ----
 .editReturn
-    JSR editToEnd                                           ;
-    LDA #charRETURN : STA (osword0BufferAddressLow),Y       ;
-;   JSR editStoreCRC                                        ;
-    JSR OSNEWL : JSR netvJumper                             ;
-    CLC : RTS                                               ;
+    JSR editToEnd                                           ; move cursor to the end of the line
+    LDA #charRETURN : STA (osword0BufferAddressLow),Y       ; terminate the entered line
+    JSR netvJumper                                          ; call (NETV) with A=13
+    JSR OSNEWL                                              ; print a new line
+    JSR editComputeCRC                                      ;
+    LDA tapeChecksumLow : STA historyCRCLow                 ;
+    LDA tapeChecksumHigh : STA historyCRCHigh               ; store a CRC for this entered line
+    CLC : RTS                                               ; return with C clear and Y = line length (set by editComputeCRC)
 
 ; ---- Cursor up ----
 .editUp
-    JSR editGetWidth
+	LDA editBufLen : BEQ editRecall                         ; if the line is empty, pressing cursor up tries to recall previously entered line
+    JSR editGetWidth                                        ; number of backspaces required to get to the line above
 .editUpLoop
-    TYA : BEQ editUpFinished
-    DEY
-    LDA #charBACKSPACE : JSR OSWRCH
+    TYA : BEQ editUpFinished                                ; if we hit the start of the line, stop here
+    DEY                                                     ; decrement position
+    LDA #charBACKSPACE : JSR OSWRCH                         ; print a backspace
     DEX
-    BPL editUpLoop
+    BPL editUpLoop                                          ; reloop X+1 times
 .editUpFinished
     JMP readInputCharacter
 
-
-
 ; ---- Move cursor to end ----
 .editToEnd
-    LDA #charTAB
-    CPY editBufLen : BEQ editAtEnd                          ;
-    JSR OSWRCH                                              ;
-    INY
-    BNE editToEnd                                           ;
+    LDA #charTAB                                            ; we will print TAB characters
+    CPY editBufLen : BEQ editAtEnd                          ; if already at the end, we have finished
+    JSR OSWRCH                                              ; print the TAB
+    INY                                                     ; increment cursor position
+    BNE editToEnd                                           ; and reloop until we reach the end
 .editAtEnd
     RTS
 
-; ---- Get screen width into X ----
+; ---- Get screen width minus 1 into X ----
 .editGetWidth
-    LDA vduTextWindowRight : SEC : SBC vduTextWindowLeft    ;
+    LDA vduTextWindowRight : SEC : SBC vduTextWindowLeft    ; 
     TAX : RTS                                               ;
 
-
-IF 0
 ; ---- Recall history ----
 .editRecall
-    JSR editComputeCRC                                      ;
+    JSR editComputeCRC                                      ; get a CRC of what's currently in the buffer
+    LDY #0                                                  ; initialise Y=0
     LDA tapeChecksumLow : CMP historyCRCLow                 ;
-    BNE editJmpLoop2                                        ;
+    BNE editUpFinished                                      ;
     LDA tapeChecksumHigh : CMP historyCRCHigh               ;
-    BNE editJmpLoop2                                        ;
-    LDY #0                                                  ;
+    BNE editUpFinished                                      ; if the CRC doesn't match what we stored, then nothing to recall
 .editFindLen
-    LDA (osword0BufferAddressLow),Y : CMP #charRETURN       ;
-    BEQ editFoundLen                                        ;
-    INY : CPY osword0MaxLineLength : BCC editFindLen        ;
+    LDA (osword0BufferAddressLow),Y : CMP #charRETURN       ; search for the terminator in the buffer to recall
+    BEQ editFoundLen                                        ; found it - exit
+    JSR OSWRCH                                              ; echo character to input line
+    INY : CPY osword0MaxLineLength : BCC editFindLen        ; reloop, being sure not to exceed the allowed OSWORD 0 line length
 .editFoundLen
-    STY editBufLen : STY editTemp                           ;
-    LDY #0 : JSR editRedraw                                 ;
-    LDY editBufLen : JMP readInputCharacter                 ;
+    STY editBufLen                                          ; store the line length
+    BCS editUpFinished                                      ; back to editing, with the cursor position at the end of the line
 
-; ---- Store/compute CRC ----
-.editStoreCRC
-    JSR editComputeCRC                                      ;
-    LDA tapeChecksumLow : STA historyCRCLow                 ;
-    LDA tapeChecksumHigh : STA historyCRCHigh               ;
-    RTS                                                     ;
+; ---- Compute CRC ----
 .editComputeCRC
-    LDY #0 : STY tapeChecksumLow : STY tapeChecksumHigh     ;
+    LDY #0 : STY tapeChecksumLow : STY tapeChecksumHigh     ; initialise CRC
 .editCRCLp
-    LDA (osword0BufferAddressLow),Y : CMP #charRETURN       ;
-    BEQ editLeftDone                                        ; reuse RTS
-    JSR updateCRC : INY : BNE editCRCLp                     ;
+    LDA (osword0BufferAddressLow),Y : CMP #charRETURN       ; read buffer character
+    BEQ editComputeCRCDone                                  ; stop when we hit the terminator
+    JSR updateCRC : INY : BNE editCRCLp                     ; accumulate CRC and reloop
+.editComputeCRCDone
     RTS                                                     ;
-ENDIF
 
 ELSE
 ; ***************************************************************************************

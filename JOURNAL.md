@@ -190,3 +190,42 @@ Frame capture (`-frame-cycles`) only works without the `-fast` flag. With `-fast
 
 #### breakat uses absolute cycle counts
 The `-commands` interface's `breakat` sets an absolute cycle count breakpoint, not a relative delay. The test uses a Python helper to track cumulative cycle counts and emit monotonically increasing breakpoints.
+
+---
+
+## 2026-03-28: OSWORD 0 Line Editor
+
+### Features
+Reimplemented OSWORD 0 (read line from input) with a full line editor:
+- **Insert/delete** at cursor position, shifting buffer contents
+- **Cursor left/right** to move within the entered line
+- **Cursor up/down** to move by screen width (derived from text window), clamped to line bounds
+- **History recall** — cursor up on an empty line recalls the previous input if the buffer contents match a stored CRC16 (reuses the tape CRC routine at &F7B0)
+- **RETURN/ESCAPE/CTRL+U** move cursor to end of line before acting
+- Respects max line length and min/max character from the OSWORD 0 parameter block
+- VDU queue check ensures multi-byte VDU sequences are processed before reading input
+- `*FX 4,0` restores the original cursor editing behaviour
+
+### Implementation details
+- Y register = cursor position within buffer, `editBufLen` (&F8) = total buffer length, `editTemp` (&F9) = temporary counter
+- Insert: shift buffer right from cursor to end using X as counter, store new char, redraw from cursor
+- Delete: shift buffer left from cursor to end, redraw from cursor, blank trailing ghost character
+- Cursor up/down: loop calling cursor left/right by screen width amount
+- History: CRC16 computed over buffer contents up to CR. Stored in spare page 2 bytes (&027E/&027F). On cursor-up with empty line, recompute CRC of current buffer; if it matches, the old line is still intact
+
+### Hurdles
+
+#### ZP clash with VDU driver
+Initial implementation used `vduTempStoreDA`/`DB` (&DA/&DB) for `editBufLen` and `editTemp`. These are clobbered by the VDU driver during OSWRCH calls (cursor movement, character display). This caused corruption in split cursor mode (`*FX 4,0`) — entering characters then pressing RETURN would output 256 tab characters. Fixed by moving to &F8/&F9 which are completely unused by the OS.
+
+#### Branch out of range
+The new OSWORD 0 code is large enough that several backward branches exceeded the 6502's -128 byte limit. Required restructuring code layout, adding local trampolines, and reordering sections to keep branch targets within range.
+
+#### Cursor key dispatch bug
+An early version used `CMP #&8B : BCC editUp` which caught all characters < &8B (including normal printable characters) instead of just the cursor-up code. Fixed to `BEQ`.
+
+#### History recall with dirty buffer
+If characters are typed and deleted, the buffer contents between position 0 and the old line's CR terminator may be corrupted. The CRC check correctly rejects recall in most cases, but Y register corruption on failed recall caused issues. Fixed by preserving Y across the CRC comparison.
+
+### Result
+16 free bytes remaining before the MMIO region at &FC00. The original OSWORD 0 is preserved in the ELSE branch for `NEW_VERSION=FALSE`.
