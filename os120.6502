@@ -539,7 +539,9 @@
 ; ***************************************************************************************
     charBELL = 7                                            ; (CTRL-G)
     charBACKSPACE = 8                                       ;
+    charTAB = 9                                             ;
     charLINEFEED = 10                                       ;
+    charCURUP = 11                                          ;
     charRETURN = 13                                         ;
     charDisableVDUOrDeleteLine = 21                         ; (CTRL-U)
     charESCAPE = 27                                         ;
@@ -14786,6 +14788,13 @@ ENDIF
 ;           byte 4: maximum acceptable ASCII code
 ;
 ; ***************************************************************************************
+IF NEW_VERSION
+editBufLen = &F8                                            ; buffer content length (ZP, previously unused)
+editTemp = &F9                                              ; temp counter (ZP, previously unused)
+historyCRCLow = &027E                                       ; stored CRC16 low (spare page 2)
+historyCRCHigh = &027F                                      ; stored CRC16 high (spare page 2)
+ENDIF
+
 .osword0EntryPoint
     LDY #4                                                  ; Y=4
 ._anon249
@@ -14799,11 +14808,212 @@ ENDIF
     STA osword0BufferAddressHigh                            ; store it in temporary buffer
     DEY                                                     ; decrement Y
     STY pagedModeCounter                                    ; Y=0 store in print line counter for paged mode
+IF NEW_VERSION
+	STY editBufLen                                          ; initialize line length to zero
+ENDIF	
     LDA (oswordX),Y                                         ; get address of input buffer (low byte)
     STA osword0BufferAddressLow                             ; and store in temporary buffer
     CLI                                                     ; allow interrupts
     BCC readInputCharacter                                  ; ALWAYS branch
 
+IF NEW_VERSION
+; ***************************************************************************************
+;
+; OSWORD 0 - Line editor with insert/delete, cursor movement, and history recall
+;
+; Y = cursor position. editBufLen (ZP) = buffer content length.
+; Cursor codes: &88=LEFT &89=RIGHT &8A=DOWN &8B=UP
+;
+; ***************************************************************************************
+
+; ---- Delete char before cursor ----
+.editDelete
+    CPY #0 : BEQ readInputCharacter	                        ; nothing to delete at first character
+    STY editTemp                                            ; remember current cursor position
+    JSR OSWRCH                                              ; print backspace character
+.editDeleteLoop
+	CPY editBufLen : BEQ editDeleteDone                     ; if we're at the line end, nothing more to do
+    LDA (osword0BufferAddressLow),Y                         ; otherwise shift the buffer data down a character
+    JSR OSWRCH                                              ; and print it
+    DEY                                                     ;
+    STA (osword0BufferAddressLow),Y                         ;
+    INY : INY                                               ;
+    BCC editDeleteLoop                                      ; reloop
+.editDeleteDone
+    DEC editBufLen                                          ; line is one character shorter
+    DEC editTemp                                            ; and cursor also moved one character left
+    LDA #32 : JSR OSWRCH
+                                                            ; fall through...
+; ---- Move cursor to editTemp position ----
+.moveCursorBack
+    LDA #charBACKSPACE                                      ; use backspace to move cursor
+.moveCursorBackLoop
+	CPY editTemp : BEQ readInputCharacter                   ; if we're there, go back to the input main loop
+	JSR OSWRCH                                              ; print backspacing character
+	DEY                                                     ;
+	BNE moveCursorBackLoop                                  ; reloop
+
+; ---- Cursor left ----
+.editLeft
+    TYA : BEQ readInputCharacter
+    DEY
+    LDA #charBACKSPACE
+    EQUB &2C	                                                ; skip two bytes
+
+; ---- Bell ----
+.editBell
+    LDA #charBELL
+
+.outputCharacterAndReadAgain
+    JSR OSWRCH                                              ; and call OSWRCH
+                                                            ; fall through...
+; ---- Main input loop ----
+.readInputCharacter
+    JSR OSRDCH                                              ;
+    BCS editExit                                            ; ESCAPE
+    TAX                                                     ;
+    LDA characterDestinationsAvailableFlags                 ;
+    ROR A : ROR A                                           ; carry = VDU disabled
+    TXA                                                     ;
+    BCS editCheckChar                                       ;
+    LDX twosComplimentOfNumberOfBytesInVDUQueue             ;
+    BNE outputCharacterAndReadAgain                         ; VDU queue busy: echo
+
+.editCheckChar
+    CMP #charRETURN : BEQ editReturn                        ;
+    CMP #charDisableVDUOrDeleteLine : BEQ editCtrlU         ;
+    CMP #charDELETE : BEQ editDelete                        ;
+    CMP #&88 : BEQ editLeft                                 ; cursor left
+    CMP #&89 : BEQ editRight                                ; cursor right
+    CMP #&8A : BEQ editDown                                 ; cursor down
+    CMP #&8B : BEQ editUp                                   ; cursor up
+
+; ---- Normal character ----
+    LDX editBufLen                                          ;
+    CPX osword0MaxLineLength : BCS editBell                 ; full?
+    CMP osword0MinASCIICharacter : BCC readInputCharacter   ; < min
+    CMP osword0MaxASCIICharacter                            ;
+    BEQ editInsert                                          ; == max: accept
+    BCS readInputCharacter                                  ; > max: reject
+
+; ---- Insert char A at cursor Y ----
+.editInsert
+    TAX                                                     ; X = char
+    STY editTemp                                            ; save cursor pos
+    INC editBufLen                                          ; already increment length
+.editInsertLoop
+    LDA (osword0BufferAddressLow),Y                         ; A = old contents of buffer
+    PHA                                                     ; store it
+    TXA : JSR OSWRCH                                        ; get back the last character and print it
+    STA (osword0BufferAddressLow),Y                         ; and store it
+    PLA : TAX                                               ; now get the old contents of the buffer into X ready to reloop
+    INY : CPY editBufLen                                    ;
+    BCC editInsertLoop                                      ; keep moving everything along until the end
+    INC editTemp
+    BNE moveCursorBack
+
+; ---- CTRL+U ----
+.editCtrlU
+    JSR editToEnd                                           ;
+    LDA #0 : STA editBufLen : STA editTemp
+    LDA #charDELETE : BNE moveCursorBackLoop
+
+; ---- Cursor right ----
+.editRight
+    CPY editBufLen : BEQ readInputCharacter
+    INY
+    LDA #charTAB: BNE outputCharacterAndReadAgain
+
+; ---- Cursor down ----
+.editDown
+    JSR editGetWidth
+.editDownLoop
+    CPY editBufLen : BEQ readInputCharacter
+    INY
+    LDA #charTAB : JSR OSWRCH
+    DEX
+    BPL editDownLoop
+    JMP readInputCharacter
+	
+; ---- ESCAPE ----
+.editExit
+    JSR editToEnd                                           ;
+.exitWithNegativeAndCarryFlagsSet
+    LDA escapeFlag : ROL A
+    RTS                                                     ;
+
+; ---- RETURN ----
+.editReturn
+    JSR editToEnd                                           ;
+    LDA #charRETURN : STA (osword0BufferAddressLow),Y       ;
+;   JSR editStoreCRC                                        ;
+    JSR OSNEWL : JSR netvJumper                             ;
+    CLC : RTS                                               ;
+
+; ---- Cursor up ----
+.editUp
+    JSR editGetWidth
+.editUpLoop
+    TYA : BEQ editUpFinished
+    DEY
+    LDA #charBACKSPACE : JSR OSWRCH
+    DEX
+    BPL editUpLoop
+.editUpFinished
+    JMP readInputCharacter
+
+
+
+; ---- Move cursor to end ----
+.editToEnd
+    LDA #charTAB
+    CPY editBufLen : BEQ editAtEnd                          ;
+    JSR OSWRCH                                              ;
+    INY
+    BNE editToEnd                                           ;
+.editAtEnd
+    RTS
+
+; ---- Get screen width into X ----
+.editGetWidth
+    LDA vduTextWindowRight : SEC : SBC vduTextWindowLeft    ;
+    TAX : RTS                                               ;
+
+
+IF 0
+; ---- Recall history ----
+.editRecall
+    JSR editComputeCRC                                      ;
+    LDA tapeChecksumLow : CMP historyCRCLow                 ;
+    BNE editJmpLoop2                                        ;
+    LDA tapeChecksumHigh : CMP historyCRCHigh               ;
+    BNE editJmpLoop2                                        ;
+    LDY #0                                                  ;
+.editFindLen
+    LDA (osword0BufferAddressLow),Y : CMP #charRETURN       ;
+    BEQ editFoundLen                                        ;
+    INY : CPY osword0MaxLineLength : BCC editFindLen        ;
+.editFoundLen
+    STY editBufLen : STY editTemp                           ;
+    LDY #0 : JSR editRedraw                                 ;
+    LDY editBufLen : JMP readInputCharacter                 ;
+
+; ---- Store/compute CRC ----
+.editStoreCRC
+    JSR editComputeCRC                                      ;
+    LDA tapeChecksumLow : STA historyCRCLow                 ;
+    LDA tapeChecksumHigh : STA historyCRCHigh               ;
+    RTS                                                     ;
+.editComputeCRC
+    LDY #0 : STY tapeChecksumLow : STY tapeChecksumHigh     ;
+.editCRCLp
+    LDA (osword0BufferAddressLow),Y : CMP #charRETURN       ;
+    BEQ editLeftDone                                        ; reuse RTS
+    JSR updateCRC : INY : BNE editCRCLp                     ;
+    RTS                                                     ;
+ENDIF
+
+ELSE
 ; ***************************************************************************************
 .readLineInputBufferFull
     LDA #charBELL                                           ; A=7
@@ -14865,6 +15075,7 @@ ENDIF
     LDA escapeFlag                                          ; A=ESCAPE FLAG
     ROL A                                                   ; put bit 7 into carry
     RTS                                                     ;
+ENDIF
 
 
 ; ***************************************************************************************
